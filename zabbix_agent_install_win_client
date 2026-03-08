@@ -1,0 +1,16 @@
+---
+- name : install zabbix agent
+  host : windows
+  become : yes
+
+- task : 
+  - name : Agent download
+    ansible.windows.win_get_url:
+      url : https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.7/zabbix_agent2-7.4.7-windows-amd64-openssl.msi
+      dest : C:\Temp\zabbix\
+      force : no
+
+  - name : Install setup
+    win_package : 
+      path : C:\Temp\zabbix\zabbix_agent2-7.4.7-windows-amd64-openssl.msi
+      state : present
