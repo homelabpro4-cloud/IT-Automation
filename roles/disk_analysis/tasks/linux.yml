@@ -1,0 +1,35 @@
+---
+- name: Get overall disk usage
+  command: df -h /
+  register: df_output
+  changed_when: false
+
+- name: Find top {{ disk_top_n }} largest files (excluding system paths)
+  shell: |
+    du -xm --max-depth=5 / 2>/dev/null \
+      {% for p in disk_exclude_paths %}--exclude={{ p }} {% endfor %} \
+      | sort -rn | head -{{ disk_top_n }} \
+      | awk '{printf "%s MB\t%s\n", $1, $2}'
+  register: top_files_linux
+  changed_when: false
+
+- name: Find top {{ disk_top_n }} largest files under /var/log
+  shell: |
+    find /var/log -type f -size +{{ disk_min_size_mb }}M \
+      -printf "%s\t%p\n" 2>/dev/null \
+      | sort -rn | head -{{ disk_top_n }} \
+      | awk '{printf "%.0f MB\t%s\n", $1/1024/1024, $2}'
+  register: log_files_linux
+  changed_when: false
+
+- name: Set Linux disk analysis summary
+  set_fact:
+    disk_analysis_summary: |
+      === Disk Usage ===
+      {{ df_output.stdout }}
+
+      === Top {{ disk_top_n }} Largest Paths (filesystem root) ===
+      {{ top_files_linux.stdout | default('No results') }}
+
+      === Large Log Files (>{{ disk_min_size_mb }}MB in /var/log) ===
+      {{ log_files_linux.stdout | default('None found') }}

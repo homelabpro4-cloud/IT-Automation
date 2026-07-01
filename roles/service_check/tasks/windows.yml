@@ -1,0 +1,56 @@
+---
+- name: Get Windows service status
+  win_shell: |
+    Get-Service -Name "{{ alert_service_name }}" -ErrorAction SilentlyContinue |
+      Select-Object Name, Status, StartType | Format-List | Out-String
+  register: win_svc_status
+  changed_when: false
+  failed_when: false
+
+- name: Get recent Application Event Log errors
+  win_shell: |
+    Get-EventLog -LogName Application -Newest 20 -EntryType Error,Warning `
+      -ErrorAction SilentlyContinue |
+      Select-Object TimeGenerated, Source, EventID, Message |
+      Format-Table -Wrap -AutoSize | Out-String
+  register: win_app_events
+  changed_when: false
+  failed_when: false
+
+- name: Get recent System Event Log errors
+  win_shell: |
+    Get-EventLog -LogName System -Newest 20 -EntryType Error,Warning `
+      -ErrorAction SilentlyContinue |
+      Select-Object TimeGenerated, Source, EventID, Message |
+      Format-Table -Wrap -AutoSize | Out-String
+  register: win_sys_events
+  changed_when: false
+  failed_when: false
+
+- name: Check memory and CPU
+  win_shell: |
+    $os = Get-WmiObject Win32_OperatingSystem
+    $cpu = (Get-WmiObject Win32_Processor).LoadPercentage
+    "CPU: $cpu%"
+    "Memory Free: $([math]::Round($os.FreePhysicalMemory/1MB,2)) GB / Total: $([math]::Round($os.TotalVisibleMemorySize/1MB,2)) GB"
+    ""
+    "Top 5 CPU processes:"
+    Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 Name,CPU,WorkingSet |
+      Format-Table -AutoSize | Out-String
+  register: win_resources
+  changed_when: false
+
+- name: Build Windows RCA summary
+  set_fact:
+    service_rca_summary: |
+      === Service Status: {{ alert_service_name }} ===
+      {{ win_svc_status.stdout | default('Service not found') }}
+
+      === Application Event Errors (last 20) ===
+      {{ win_app_events.stdout | default('No errors') | truncate(800) }}
+
+      === System Event Errors (last 20) ===
+      {{ win_sys_events.stdout | default('No errors') | truncate(800) }}
+
+      === System Resources ===
+      {{ win_resources.stdout }}

@@ -1,0 +1,8 @@
+---
+- name: Run Linux service check
+  include_tasks: linux.yml
+  when: ansible_os_family != "Windows"
+
+- name: Run Windows service check
+  include_tasks: windows.yml
+  when: ansible_os_family == "Windows"

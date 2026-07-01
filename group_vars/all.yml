@@ -1,0 +1,20 @@
+---
+# ── Approval server ─────────────────────────────────────────────────────────────
+approval_server_url: "{{ lookup('env', 'APPROVAL_SERVER_URL') | default('http://semaphore:5050', true) }}"
+approval_timeout_seconds: 3600   # 1 hour for user to respond
+approval_poll_interval: 30       # seconds between polls
+
+# ── Notification channels ────────────────────────────────────────────────────────
+teams_webhook_url: "{{ lookup('env', 'TEAMS_WEBHOOK_URL') | default('', true) }}"
+smtp_to: "{{ lookup('env', 'SMTP_TO') | default('', true) }}"
+
+# ── Disk analysis thresholds ─────────────────────────────────────────────────────
+disk_top_n: 5                    # number of largest files/dirs to report
+disk_min_size_mb: 100            # ignore items smaller than this
+
+# ── Paths to ignore during disk scan ────────────────────────────────────────────
+disk_exclude_paths:
+  - /proc
+  - /sys
+  - /dev
+  - /run

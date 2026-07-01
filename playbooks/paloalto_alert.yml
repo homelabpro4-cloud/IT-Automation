@@ -1,0 +1,56 @@
+---
+# Playbook: paloalto_alert.yml
+# Triggered by Zabbix for Palo Alto firewall alerts (interface down, HA failover, etc.)
+# Flow:
+#   1. Gather PA system/interface/log state → build RCA
+#   2. Notify user via Teams/Email for approval
+#   3. If approved → commit pending config or restart dataplane (based on alert type)
+
+- name: Palo Alto Alert Handler
+  hosts: "{{ alert_host | default('paloalto') }}"
+  gather_facts: false
+  vars:
+    alert_type: paloalto
+
+  tasks:
+    - name: Gather Palo Alto diagnostics
+      include_role:
+        name: paloalto_check
+
+    - name: Request user approval with PA diagnostics
+      include_role:
+        name: notify_and_approve
+      vars:
+        approval_summary: "{{ pa_rca_summary }}\n\nApproving will attempt a dataplane restart / pending config commit as appropriate."
+
+    - name: Abort if user denied or timed out
+      meta: end_play
+      when: approval_decision != "approved"
+
+    - name: Commit pending configuration (if any)
+      paloaltonetworks.panos.panos_commit_firewall:
+        provider:
+          ip_address: "{{ ansible_host }}"
+          username: "{{ paloalto_username }}"
+          password: "{{ paloalto_password }}"
+      register: pa_commit
+      failed_when: false
+      delegate_to: localhost
+
+    - name: Restart dataplane (for interface/forwarding issues)
+      paloaltonetworks.panos.panos_op:
+        provider:
+          ip_address: "{{ ansible_host }}"
+          username: "{{ paloalto_username }}"
+          password: "{{ paloalto_password }}"
+        cmd: "debug software restart process dataplane"
+      register: pa_restart
+      when: "'interface' in alert_trigger | lower or 'dataplane' in alert_trigger | lower"
+      delegate_to: localhost
+
+    - name: Report Palo Alto action result
+      debug:
+        msg: |
+          Action completed on {{ inventory_hostname }}.
+          Commit: {{ pa_commit.msg | default('N/A') }}
+          Restart: {{ pa_restart.stdout | default('Not triggered') }}

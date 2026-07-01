@@ -1,0 +1,8 @@
+---
+collections:
+  - name: ansible.windows
+    version: ">=1.14.0"
+  - name: community.windows
+    version: ">=1.13.0"
+  - name: paloaltonetworks.panos
+    version: ">=2.20.0"

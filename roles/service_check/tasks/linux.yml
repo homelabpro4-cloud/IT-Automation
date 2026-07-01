@@ -1,0 +1,48 @@
+---
+- name: Get service status
+  command: systemctl status {{ alert_service_name }} --no-pager -l
+  register: svc_status
+  changed_when: false
+  failed_when: false
+
+- name: Get last 50 lines of journal for service
+  command: journalctl -u {{ alert_service_name }} -n 50 --no-pager
+  register: svc_journal
+  changed_when: false
+  failed_when: false
+
+- name: Get last 50 lines of syslog
+  command: tail -n 50 /var/log/syslog
+  register: syslog_tail
+  changed_when: false
+  failed_when: false
+  ignore_errors: true
+
+- name: Check if OOM killed
+  shell: "journalctl -k --since='24 hours ago' | grep -i 'killed process\\|oom' | tail -10"
+  register: oom_check
+  changed_when: false
+  failed_when: false
+
+- name: Check CPU and memory
+  shell: |
+    echo "=== Load Average ===" && uptime
+    echo "=== Memory ===" && free -h
+    echo "=== Top 5 CPU processes ===" && ps aux --sort=-%cpu | head -6
+  register: sys_resources
+  changed_when: false
+
+- name: Build Linux RCA summary
+  set_fact:
+    service_rca_summary: |
+      === Service Status: {{ alert_service_name }} ===
+      {{ svc_status.stdout | default(svc_status.stderr) | truncate(800) }}
+
+      === Recent Journal Logs ===
+      {{ svc_journal.stdout | default('No journal entries') | truncate(1000) }}
+
+      === OOM / Kernel Kills (last 24h) ===
+      {{ oom_check.stdout | default('None detected') }}
+
+      === System Resources ===
+      {{ sys_resources.stdout }}

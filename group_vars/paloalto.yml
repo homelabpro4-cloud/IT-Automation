@@ -1,0 +1,6 @@
+---
+ansible_connection: local
+ansible_network_os: panos
+# Credentials set via Semaphore environment or vault
+# paloalto_username: admin
+# paloalto_password: <vault>

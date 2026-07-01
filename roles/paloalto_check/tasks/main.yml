@@ -1,0 +1,60 @@
+---
+# Requires: pan-os-python (pip install pan-os-python) and paloaltonetworks.panos collection
+# ansible-galaxy collection install paloaltonetworks.panos
+
+- name: Gather Palo Alto system info
+  paloaltonetworks.panos.panos_op:
+    provider:
+      ip_address: "{{ ansible_host }}"
+      username: "{{ paloalto_username }}"
+      password: "{{ paloalto_password }}"
+    cmd: "show system info"
+  register: pa_sys_info
+  delegate_to: localhost
+
+- name: Get interface status
+  paloaltonetworks.panos.panos_op:
+    provider:
+      ip_address: "{{ ansible_host }}"
+      username: "{{ paloalto_username }}"
+      password: "{{ paloalto_password }}"
+    cmd: "show interface all"
+  register: pa_interfaces
+  delegate_to: localhost
+
+- name: Get system logs (last 20 critical)
+  paloaltonetworks.panos.panos_op:
+    provider:
+      ip_address: "{{ ansible_host }}"
+      username: "{{ paloalto_username }}"
+      password: "{{ paloalto_password }}"
+    cmd: "show log system direction equal backward"
+  register: pa_logs
+  delegate_to: localhost
+  failed_when: false
+
+- name: Get HA status
+  paloaltonetworks.panos.panos_op:
+    provider:
+      ip_address: "{{ ansible_host }}"
+      username: "{{ paloalto_username }}"
+      password: "{{ paloalto_password }}"
+    cmd: "show high-availability state"
+  register: pa_ha
+  delegate_to: localhost
+  failed_when: false
+
+- name: Build Palo Alto RCA summary
+  set_fact:
+    pa_rca_summary: |
+      === System Info ===
+      {{ pa_sys_info.stdout | default('Unavailable') | truncate(500) }}
+
+      === Interface Status ===
+      {{ pa_interfaces.stdout | default('Unavailable') | truncate(800) }}
+
+      === HA State ===
+      {{ pa_ha.stdout | default('Not in HA or unavailable') | truncate(300) }}
+
+      === Recent System Logs ===
+      {{ pa_logs.stdout | default('No logs retrieved') | truncate(800) }}

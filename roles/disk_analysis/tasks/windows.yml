@@ -1,0 +1,52 @@
+---
+- name: Get overall disk usage (Windows)
+  win_shell: |
+    Get-PSDrive -PSProvider FileSystem | Select-Object Name,
+      @{N='Used(GB)';E={[math]::Round($_.Used/1GB,2)}},
+      @{N='Free(GB)';E={[math]::Round($_.Free/1GB,2)}},
+      @{N='Total(GB)';E={[math]::Round(($_.Used+$_.Free)/1GB,2)}} |
+      Format-Table -AutoSize | Out-String
+  register: win_disk_usage
+  changed_when: false
+
+- name: Find top {{ disk_top_n }} largest files on C drive
+  win_shell: |
+    Get-ChildItem -Path C:\ -Recurse -ErrorAction SilentlyContinue |
+      Where-Object { -not $_.PSIsContainer } |
+      Sort-Object Length -Descending |
+      Select-Object -First {{ disk_top_n }}
+      FullName,
+      @{N='Size(MB)';E={[math]::Round($_.Length/1MB,2)}} |
+      Format-Table -AutoSize | Out-String
+  register: win_top_files
+  changed_when: false
+
+- name: Find large files in Windows Temp and Logs
+  win_shell: |
+    $paths = @("$env:TEMP", "$env:SystemRoot\Temp",
+               "$env:SystemRoot\Logs", "C:\inetpub\logs")
+    $results = foreach ($p in $paths) {
+      if (Test-Path $p) {
+        Get-ChildItem -Path $p -Recurse -ErrorAction SilentlyContinue |
+          Where-Object { $_.Length -gt {{ disk_min_size_mb }}MB } |
+          Select-Object FullName,
+            @{N='Size(MB)';E={[math]::Round($_.Length/1MB,2)}}
+      }
+    }
+    $results | Sort-Object 'Size(MB)' -Descending |
+      Select-Object -First {{ disk_top_n }} |
+      Format-Table -AutoSize | Out-String
+  register: win_temp_files
+  changed_when: false
+
+- name: Set Windows disk analysis summary
+  set_fact:
+    disk_analysis_summary: |
+      === Disk Usage ===
+      {{ win_disk_usage.stdout }}
+
+      === Top {{ disk_top_n }} Largest Files (C:\) ===
+      {{ win_top_files.stdout | default('No results') }}
+
+      === Large Temp / Log Files (>{{ disk_min_size_mb }}MB) ===
+      {{ win_temp_files.stdout | default('None found') }}

@@ -1,0 +1,83 @@
+---
+# Playbook: service_alert.yml
+# Triggered by Zabbix when a service or Zabbix agent is down/not responding.
+# Flow:
+#   1. Collect service status + logs → build RCA report
+#   2. Send Teams/Email with RCA and Approve/Deny restart links
+#   3. If approved → restart service and verify
+#   4. If denied  → log and exit
+
+- name: Service Alert Handler
+  hosts: "{{ alert_host | default('all') }}"
+  gather_facts: true
+  vars:
+    alert_type: service
+    # alert_service_name can be passed as extra var; default inferred from trigger
+    alert_service_name: "{{ alert_service_name | default(alert_trigger | regex_replace('.*service[: ]+([^ ]+).*', '\\1') | default('unknown')) }}"
+
+  tasks:
+    - name: Collect service status and logs for RCA
+      include_role:
+        name: service_check
+
+    - name: Request user approval with RCA report
+      include_role:
+        name: notify_and_approve
+      vars:
+        approval_summary: "{{ service_rca_summary }}\n\nApproving will restart the '{{ alert_service_name }}' service."
+
+    - name: Abort if user denied or timed out
+      meta: end_play
+      when: approval_decision != "approved"
+
+    # ── Restart: Linux ──────────────────────────────────────────────────────────
+    - name: Restart service on Linux (approved)
+      block:
+        - name: Restart systemd service
+          systemd:
+            name: "{{ alert_service_name }}"
+            state: restarted
+            enabled: true
+          register: restart_result
+
+        - name: Wait for service to stabilize
+          pause:
+            seconds: 10
+
+        - name: Verify service is running
+          command: systemctl is-active {{ alert_service_name }}
+          register: svc_active
+          changed_when: false
+          failed_when: svc_active.rc != 0
+
+        - name: Report restart result
+          debug:
+            msg: "Service '{{ alert_service_name }}' on {{ inventory_hostname }} is now {{ svc_active.stdout }}."
+      when:
+        - approval_decision == "approved"
+        - ansible_os_family != "Windows"
+
+    # ── Restart: Windows ────────────────────────────────────────────────────────
+    - name: Restart service on Windows (approved)
+      block:
+        - name: Restart Windows service
+          win_service:
+            name: "{{ alert_service_name }}"
+            state: restarted
+            start_mode: auto
+
+        - name: Wait for service to stabilize
+          pause:
+            seconds: 10
+
+        - name: Verify Windows service is running
+          win_service:
+            name: "{{ alert_service_name }}"
+          register: win_svc_check
+
+        - name: Report restart result
+          debug:
+            msg: "Service '{{ alert_service_name }}' on {{ inventory_hostname }} is {{ win_svc_check.state }}."
+      when:
+        - approval_decision == "approved"
+        - ansible_os_family == "Windows"

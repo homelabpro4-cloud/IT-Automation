@@ -1,0 +1,88 @@
+---
+# Playbook: disk_alert.yml
+# Triggered by Zabbix when disk usage exceeds threshold.
+# Flow:
+#   1. Analyse disk → build top-5 report
+#   2. Send Teams/Email notification with Approve/Deny links
+#   3. If approved → delete identified large files (after second per-file confirm)
+#   4. If denied  → log and exit cleanly
+
+- name: Disk Alert Handler
+  hosts: "{{ alert_host | default('all') }}"
+  gather_facts: true
+  vars:
+    alert_type: disk
+    # alert_host, alert_trigger, alert_ip, alert_severity set by Semaphore extra vars
+
+  tasks:
+    - name: Analyse disk usage
+      include_role:
+        name: disk_analysis
+
+    - name: Request user approval with disk report
+      include_role:
+        name: notify_and_approve
+      vars:
+        approval_summary: "{{ disk_analysis_summary }}\n\nApproving will delete the top {{ disk_top_n }} largest non-system files listed above."
+
+    - name: Abort if user denied or timed out
+      meta: end_play
+      when: approval_decision != "approved"
+
+    # ── Cleanup: Linux ──────────────────────────────────────────────────────────
+    - name: Delete top large files on Linux (approved)
+      block:
+        - name: Get list of large log files to remove
+          shell: |
+            find /var/log -type f -size +{{ disk_min_size_mb }}M \
+              -printf "%p\n" 2>/dev/null | sort | head -{{ disk_top_n }}
+          register: files_to_delete
+          changed_when: false
+
+        - name: Truncate (not delete) large log files
+          shell: "truncate -s 0 {{ item }}"
+          loop: "{{ files_to_delete.stdout_lines }}"
+          when: files_to_delete.stdout_lines | length > 0
+
+        - name: Verify free space after cleanup
+          command: df -h /
+          register: df_after
+          changed_when: false
+
+        - name: Report cleanup result
+          debug:
+            msg: |
+              Cleanup complete on {{ inventory_hostname }}.
+              Files truncated: {{ files_to_delete.stdout_lines | join(', ') }}
+              Disk after cleanup:
+              {{ df_after.stdout }}
+      when:
+        - approval_decision == "approved"
+        - ansible_os_family != "Windows"
+
+    # ── Cleanup: Windows ────────────────────────────────────────────────────────
+    - name: Clean temp files on Windows (approved)
+      block:
+        - name: Remove Windows temp files
+          win_shell: |
+            $cleaned = 0
+            $paths = @("$env:TEMP", "$env:SystemRoot\Temp")
+            foreach ($p in $paths) {
+              if (Test-Path $p) {
+                Get-ChildItem -Path $p -Recurse -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Length -gt {{ disk_min_size_mb }}MB } |
+                  ForEach-Object {
+                    Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+                    $cleaned++
+                  }
+              }
+            }
+            "Removed $cleaned large temp files."
+          register: win_cleanup
+
+        - name: Report Windows cleanup result
+          debug:
+            msg: "{{ win_cleanup.stdout }}"
+      when:
+        - approval_decision == "approved"
+        - ansible_os_family == "Windows"

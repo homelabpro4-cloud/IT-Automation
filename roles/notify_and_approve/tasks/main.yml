@@ -1,0 +1,62 @@
+---
+# Role: notify_and_approve
+# Registers an approval request, sends Teams+Email notification, polls for response.
+# Required vars: alert_host, alert_trigger, approval_summary
+# Sets fact: approval_decision -> "approved" | "denied" | "timeout"
+
+- name: Register approval request with callback server
+  uri:
+    url: "{{ approval_server_url }}/request"
+    method: POST
+    body_format: json
+    body:
+      alert_host: "{{ alert_host }}"
+      alert_trigger: "{{ alert_trigger }}"
+      alert_type: "{{ alert_type | default('unknown') }}"
+    return_content: true
+    status_code: 200
+  register: approval_reg
+  delegate_to: localhost
+
+- name: Set approval link facts
+  set_fact:
+    approval_token: "{{ approval_reg.json.token }}"
+    approve_url: "{{ approval_reg.json.approve_url }}"
+    deny_url: "{{ approval_reg.json.deny_url }}"
+
+- name: Send Teams / Email notification
+  command: >
+    python3 {{ playbook_dir }}/../scripts/notify.py
+    --host     "{{ alert_host }}"
+    --trigger  "{{ alert_trigger }}"
+    --approve-url "{{ approve_url }}"
+    --deny-url    "{{ deny_url }}"
+    --summary  "{{ approval_summary | replace('\n', '\\n') }}"
+  delegate_to: localhost
+  environment:
+    TEAMS_WEBHOOK_URL: "{{ teams_webhook_url }}"
+    SMTP_TO: "{{ smtp_to }}"
+    SMTP_HOST: "{{ lookup('env', 'SMTP_HOST') }}"
+    SMTP_USER: "{{ lookup('env', 'SMTP_USER') }}"
+    SMTP_PASS: "{{ lookup('env', 'SMTP_PASS') }}"
+    SMTP_FROM: "{{ lookup('env', 'SMTP_FROM') | default('automation@example.com', true) }}"
+
+- name: Poll for approval decision (max {{ approval_timeout_seconds }}s)
+  uri:
+    url: "{{ approval_server_url }}/status?token={{ approval_token }}"
+    method: GET
+    return_content: true
+    status_code: 200
+  register: poll_result
+  until: poll_result.json.status in ["approved", "denied", "expired"]
+  retries: "{{ (approval_timeout_seconds / approval_poll_interval) | int }}"
+  delay: "{{ approval_poll_interval }}"
+  delegate_to: localhost
+
+- name: Set approval decision fact
+  set_fact:
+    approval_decision: "{{ poll_result.json.status | default('timeout') }}"
+
+- name: Log decision
+  debug:
+    msg: "Approval decision for {{ alert_host }}: {{ approval_decision }}"
